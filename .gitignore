@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Weights — NEVER commit
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Data — NEVER commit
+data/
+results_*/
+holdout_testset/
+trainset/
+images_pass_blankQC/
+*.png
+*.jpg
+*.jpeg
+*.tif
+*.tiff
+*.dcm
+*.nii
+*.nii.gz
+
+# Patient-identifying files — NEVER commit
+*hashed_mrn*
+*MRN*
+*patient_list*
+MEE_POAG_ICD.txt
+
+# Per-eye metric CSVs
+per_eye_*.csv
+results_per_eye_*.csv
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*.swo
