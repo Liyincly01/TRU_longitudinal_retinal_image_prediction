@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
 Benchmark the five paper configurations against the copy-last baseline
-on a held-out FAF test set (and optionally an SLO POAG external set).
+on a test set.
 
-Reports MAE / NMSE / PSNR / SSIM / Delta-SSIM per-eye; FAF additionally
-reports hypo-AF atrophy Dice and HD95. Pairwise Wilcoxon p-values for
-the four manuscript contrasts are appended.
+Reports MAE / NMSE / PSNR / SSIM / Delta-SSIM per-eye; additionally
+reports hypo-AF atrophy Dice and HD95 for images with macular atrophy. Pairwise Wilcoxon p-values are appended.
 
 This script does NOT ship weights or data. Every checkpoint path and
 data directory must be supplied via CLI flags. Checkpoints trained
