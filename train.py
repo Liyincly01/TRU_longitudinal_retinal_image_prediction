@@ -7,10 +7,6 @@ Unified trainer for the five manuscript configurations.
     ia_nonlinear   (Inference-Alignment, nonlinear DDPM schedule, x̂₀-predict)
     ia_linear      (Inference-Alignment, linear schedule, x̂₀-predict)
     std_ddim       (Standard conditional DDIM; v-predict on noised target)
-
-All four wrappers share the same MultiScaleTemporalUNet_v13 backbone.
-History dropout defaults to 0.03 across all methods; LR schedule is
-warmup + cosine to zero (no floor).
 """
 
 import argparse
