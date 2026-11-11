@@ -92,7 +92,7 @@ class SelfAttention2D(nn.Module):
         h = self.norm(x)
         qkv = self.qkv(h).reshape(B, 3, self.num_heads, C // self.num_heads, H * W)
         q, k, v = qkv[:, 0], qkv[:, 1], qkv[:, 2]
-        attn = torch.einsum("bhdn,bhem->bhnm", q, k) * (C // self.num_heads) ** -0.5
+        attn = torch.einsum("bhdn,bhdm->bhnm", q, k) * (C // self.num_heads) ** -0.5
         attn = attn.softmax(dim=-1)
         out = torch.einsum("bhnm,bhdm->bhdn", attn, v)
         out = out.reshape(B, C, H, W)
@@ -488,7 +488,7 @@ def latent_average_stabilization(
 
     for i, t in enumerate(timesteps):
         t_batch = torch.full((m,), t.item(), device=device, dtype=torch.long)
-        t_prev = timesteps[i + 1].item() if i + 1 < len(timesteps) else 0
+        t_prev = timesteps[i + 1].item() if i + 1 < len(timesteps) else -1
         cn_residuals = controlnet(z, t_batch, ctx_rep, cond_rep)
         noise_pred = unet(z, t_batch, ctx_rep, cn_residuals)
         z, _ = scheduler.step(noise_pred, t.item(), z, t_prev)
