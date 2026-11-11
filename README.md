@@ -85,5 +85,5 @@ The export retains EMA weights and inference configuration, omitting optimizer s
 Project code is covered by [MIT](LICENSE), except the TADM adaptation in `external/models_tadm.py`, which is covered by [GPLv3](external/LICENSE-TADM). Upstream components retain their respective licenses. Please cite the methods you use:
 
 - [TADM](https://github.com/MattiaLitrico/TADM-Temporally-Aware-Diffusion-Model-for-Neurodegenerative-Progression-on-Brain-MRI), Litrico et al., MICCAI 2024.
-- [ImageFlowNet](https://github.com/KrishnaswamyLab/ImageFlowNet), Liu et al., MICCAI 2024.
+- [ImageFlowNet](https://github.com/KrishnaswamyLab/ImageFlowNet), Liu et al., ICASSP 2025.
 - BrLP, Puglisi et al., *Medical Image Analysis*, 2025; adapted here to 2D FAF.
