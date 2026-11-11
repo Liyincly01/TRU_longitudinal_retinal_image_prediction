@@ -43,6 +43,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from src.backbone import MaskedLongitudinalDataset, extract_last_frame
+from src.data import sequences, training_eyes
 from src.metrics import (
     calculate_atrophy_dice,
     calculate_copy_metrics,
@@ -56,6 +57,7 @@ from external.models_brlp import (
     DiffusionUNet2D,
     PatchDiscriminator,
     VAE2D,
+    latent_average_stabilization,
 )
 
 
@@ -66,14 +68,21 @@ from external.models_brlp import (
 class SingleFrameDataset(Dataset):
     """All individual frames, filtered by eye ID for patient-level splits."""
 
-    def __init__(self, data_dir, image_size=256, use_augmentation=True, eye_ids=None):
+    def __init__(self, data_dir, image_size=256, use_augmentation=True, eye_ids=None,
+                 manifest=None, cohort=None):
         super().__init__()
         self.image_size = image_size
         self.use_augmentation = use_augmentation
 
-        all_files = glob.glob(os.path.join(data_dir, "*.png"))
+        all_files = ([v["image"] for visits in sequences(manifest=manifest, cohort=cohort).values()
+                      for v in visits] if manifest else glob.glob(os.path.join(data_dir, "*.png")))
         image_files = [f for f in all_files if not f.endswith("_mask.png")]
 
+        if manifest and eye_ids is not None:
+            selected_paths = {v["image"] for eye, visits in sequences(manifest=manifest, cohort=cohort).items()
+                              if eye in eye_ids for v in visits}
+            image_files = [p for p in image_files if p in selected_paths]
+            eye_ids = None
         if eye_ids is not None:
             filtered = []
             for f in image_files:
@@ -202,9 +211,9 @@ def train_vae(args, train_eye_ids, val_eye_ids, device):
     os.makedirs(vae_dir, exist_ok=True)
 
     train_ds = SingleFrameDataset(args.data_dir, image_size=args.image_size,
-                                  use_augmentation=True, eye_ids=train_eye_ids)
+                                  use_augmentation=True, eye_ids=train_eye_ids, manifest=args.manifest, cohort=args.cohort)
     val_ds = SingleFrameDataset(args.data_dir, image_size=args.image_size,
-                                use_augmentation=False, eye_ids=val_eye_ids)
+                                use_augmentation=False, eye_ids=val_eye_ids, manifest=args.manifest, cohort=args.cohort)
     train_loader = DataLoader(train_ds, batch_size=args.vae_batch_size, shuffle=True,
                               num_workers=4, pin_memory=True, drop_last=True)
     val_loader = DataLoader(val_ds, batch_size=args.vae_batch_size, shuffle=False,
@@ -367,12 +376,12 @@ def train_diffusion(args, vae, train_eye_ids, val_eye_ids, device):
     train_ds = MaskedLongitudinalDataset(
         args.data_dir, max_history=args.max_history,
         image_size=args.image_size, use_augmentation=True,
-        eye_ids=train_eye_ids,
+        eye_ids=train_eye_ids, manifest=args.manifest, cohort=args.cohort,
     )
     val_ds = MaskedLongitudinalDataset(
         args.data_dir, max_history=args.max_history,
         image_size=args.image_size, use_augmentation=False,
-        eye_ids=val_eye_ids,
+        eye_ids=val_eye_ids, manifest=args.manifest, cohort=args.cohort,
     )
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=4, pin_memory=True, drop_last=True)
@@ -532,7 +541,7 @@ def train_diffusion(args, vae, train_eye_ids, val_eye_ids, device):
 
             val_latent_mses = []
             all_tgt, all_pred, all_mask, all_hist, all_tmask = [], [], [], [], []
-            max_val_batches = 10
+            max_val_batches = len(val_loader)
 
             with torch.no_grad():
                 for batch_idx, batch in enumerate(val_loader):
@@ -562,15 +571,13 @@ def train_diffusion(args, vae, train_eye_ids, val_eye_ids, device):
                     )
                     controlnet_cond = torch.cat([z_baseline, dt_spatial], dim=1)
 
-                    z_pred_residual = torch.randn_like(z_baseline)
-                    timesteps = scheduler.get_timesteps(args.num_inference_steps).to(device)
-                    for i, t_val in enumerate(timesteps):
-                        t_batch = torch.full((B,), t_val.item(), device=device, dtype=torch.long)
-                        t_prev = timesteps[i + 1].item() if i + 1 < len(timesteps) else 0
-                        cn_res = ema_controlnet(z_pred_residual, t_batch, dt_emb, controlnet_cond)
-                        noise_pred = ema_unet(z_pred_residual, t_batch, dt_emb, cn_res)
-                        z_pred_residual, _ = scheduler.step(
-                            noise_pred, t_val.item(), z_pred_residual, t_prev)
+                    z_pred_residual = torch.cat([
+                        latent_average_stabilization(
+                            ema_unet, ema_controlnet, scheduler,
+                            controlnet_cond[i:i+1], dt_emb[i:i+1],
+                            z_baseline.shape[1:], device,
+                            num_inference_steps=args.num_inference_steps, m=args.las_m)
+                        for i in range(B)], dim=0)
 
                     z_pred = z_baseline + z_pred_residual
                     val_latent_mses.append(F.mse_loss(z_pred, z_target).item())
@@ -621,7 +628,7 @@ def train_diffusion(args, vae, train_eye_ids, val_eye_ids, device):
                     "ema_controlnet": ema_controlnet.state_dict(),
                     "ema_delta_embed": ema_delta_embed.state_dict(),
                     "vae": vae.state_dict(), "epoch": epoch,
-                    "best_ssim": best_ssim, "best_latent_mse": best_latent_mse,
+                    "best_ssim": best_ssim, "best_latent_mse": best_latent_mse, "args": vars(args),
                 }, os.path.join(diff_dir, "checkpoint_best_ssim.pt"))
                 print(f"  -> New best SSIM: {best_ssim:.4f}")
 
@@ -635,7 +642,7 @@ def train_diffusion(args, vae, train_eye_ids, val_eye_ids, device):
                     "ema_controlnet": ema_controlnet.state_dict(),
                     "ema_delta_embed": ema_delta_embed.state_dict(),
                     "vae": vae.state_dict(), "epoch": epoch,
-                    "best_ssim": best_ssim, "best_latent_mse": best_latent_mse,
+                    "best_ssim": best_ssim, "best_latent_mse": best_latent_mse, "args": vars(args),
                 }, os.path.join(diff_dir, "checkpoint_best_latent_mse.pt"))
                 print(f"  -> New best Latent MSE: {best_latent_mse:.6f}")
 
@@ -718,7 +725,9 @@ def main():
         description="2D-BrLP: Latent Diffusion for Longitudinal FAF Prediction."
     )
 
-    parser.add_argument("--data_dir", type=str, required=True)
+    parser.add_argument("--data_dir", type=str)
+    parser.add_argument("--manifest")
+    parser.add_argument("--cohort")
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--max_history", type=int, default=6)
     parser.add_argument("--image_size", type=int, default=256)
@@ -729,9 +738,9 @@ def main():
     parser.add_argument("--latent_channels", type=int, default=4)
     parser.add_argument("--force_retrain_vae", action="store_true")
 
-    parser.add_argument("--epochs", type=int, default=300)
-    parser.add_argument("--batch_size", type=int, default=6)
-    parser.add_argument("--lr", type=float, default=1e-4)
+    parser.add_argument("--epochs", type=int, default=150)
+    parser.add_argument("--batch_size", type=int, default=12)
+    parser.add_argument("--lr", type=float, default=2e-4)
     parser.add_argument("--warmup_steps", type=int, default=1000)
     parser.add_argument("--context_dim", type=int, default=256)
     parser.add_argument("--num_inference_steps", type=int, default=50)
@@ -746,6 +755,8 @@ def main():
                         help="Skip VAE training (load from checkpoint_best.pt).")
 
     args = parser.parse_args()
+    if bool(args.data_dir) == bool(args.manifest):
+        parser.error("Supply either --data_dir or --manifest.")
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -764,11 +775,12 @@ def main():
     print(f"  DDIM: {args.num_inference_steps} steps, LAS m={args.las_m}")
     print("=" * 70, flush=True)
 
-    train_eye_ids, val_eye_ids = patient_level_split(
-        args.data_dir, args.val_split, args.seed,
-        args.max_history, args.image_size,
-        exclude_patients_tsv=args.exclude_patients_tsv,
-    )
+    if args.manifest:
+        _, _, train_eye_ids, val_eye_ids = training_eyes(args.manifest, args.cohort, args.exclude_patients_tsv)
+    else:
+        train_eye_ids, val_eye_ids = patient_level_split(
+            args.data_dir, args.val_split, args.seed, args.max_history, args.image_size,
+            exclude_patients_tsv=args.exclude_patients_tsv)
 
     vae_best_path = os.path.join(args.output_dir, "vae", "checkpoint_best.pt")
     if args.skip_vae and os.path.exists(vae_best_path):

@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from skimage.metrics import structural_similarity as ssim_func
+from .image_metrics import masked_ssim
 
 
 def to01(arr):
@@ -41,26 +42,17 @@ def calculate_masked_metrics(target, prediction, mask):
 
         valid_t = t[m > 0.5]
         valid_p = p[m > 0.5]
-        if len(valid_t) > 100:
+        if len(valid_t):
             mse = np.mean((valid_t - valid_p) ** 2)
             psnr = 10 * np.log10(1.0 / max(mse, 1e-10))
             psnr_vals.append(psnr)
 
-        ys, xs = np.where(m > 0.5)
-        if len(ys) > 100:
-            y0, y1 = ys.min(), ys.max()
-            x0, x1 = xs.min(), xs.max()
-            if (y1 - y0) > 16 and (x1 - x0) > 16:
-                try:
-                    ssim_vals.append(
-                        ssim_func(t[y0:y1+1, x0:x1+1],
-                                  p[y0:y1+1, x0:x1+1], data_range=1.0)
-                    )
-                except Exception:
-                    pass
+        similarity = masked_ssim(t, p, m > .5, 1.)
+        if np.isfinite(similarity):
+            ssim_vals.append(similarity)
 
-    return (float(np.mean(psnr_vals)) if psnr_vals else 0.0,
-            float(np.mean(ssim_vals)) if ssim_vals else 0.0)
+    return (float(np.mean(psnr_vals)) if psnr_vals else np.nan,
+            float(np.mean(ssim_vals)) if ssim_vals else np.nan)
 
 
 def calculate_atrophy_dice(target, prediction, mask, threshold=0.25):

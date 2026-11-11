@@ -3,7 +3,7 @@
 Unified trainer for the five manuscript configurations.
 
 --method choices:
-    tru            (Temporal Residual U-Net; direct regression, no noise)
+    tru            (Temporal Retinal U-Net; direct regression, no noise)
     ia_nonlinear   (Inference-Alignment, nonlinear DDPM schedule, x̂₀-predict)
     ia_linear      (Inference-Alignment, linear schedule, x̂₀-predict)
     std_ddim       (Standard conditional DDIM; v-predict on noised target)
@@ -28,7 +28,8 @@ from src import (
     METHOD_CHOICES,
     build_wrapper,
 )
-from src.metrics import compute_ssim
+from src.image_metrics import masked_ssim
+from src.data import training_eyes
 
 
 def get_lr_lambda(warmup_steps, total_steps):
@@ -102,7 +103,7 @@ def main():
 
     # Required
     parser.add_argument("--method", type=str, required=True, choices=METHOD_CHOICES)
-    parser.add_argument("--data_dir", type=str, required=True,
+    parser.add_argument("--data_dir", type=str,
                         help="Directory of PNGs following the documented naming schema.")
     parser.add_argument("--output_dir", type=str, required=True)
 
@@ -138,7 +139,11 @@ def main():
                         help="Optional TSV with a 'hashed_mrn' column; "
                              "matching patients are removed before splitting.")
 
+    parser.add_argument("--manifest")
+    parser.add_argument("--cohort")
     args = parser.parse_args()
+    if bool(args.data_dir) == bool(args.manifest):
+        parser.error("Supply either --data_dir or --manifest.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
@@ -156,10 +161,16 @@ def main():
     index_dataset = MaskedLongitudinalDataset(
         args.data_dir, max_history=args.max_history,
         image_size=args.image_size, use_augmentation=False,
+        manifest=args.manifest, cohort=args.cohort,
     )
-    train_mrns, val_mrns, train_eye_ids, val_eye_ids = patient_level_split(
-        index_dataset, args.val_split, args.seed, args.exclude_patients_tsv,
-    )
+    if args.manifest:
+        train_mrns, val_mrns, train_eye_ids, val_eye_ids = training_eyes(
+            args.manifest, args.cohort, args.exclude_patients_tsv)
+    else:
+        train_mrns, val_mrns, train_eye_ids, val_eye_ids = patient_level_split(
+            index_dataset, args.val_split, args.seed, args.exclude_patients_tsv)
+    if not train_eye_ids or not val_eye_ids:
+        raise ValueError("Training and validation sets must both be nonempty.")
     print(f"Train: {len(train_mrns)} patients, {len(train_eye_ids)} eyes")
     print(f"Val:   {len(val_mrns)} patients, {len(val_eye_ids)} eyes")
     del index_dataset
@@ -167,12 +178,12 @@ def main():
     train_dataset = MaskedLongitudinalDataset(
         args.data_dir, max_history=args.max_history,
         image_size=args.image_size, use_augmentation=True,
-        eye_ids=train_eye_ids,
+        eye_ids=train_eye_ids, manifest=args.manifest, cohort=args.cohort,
     )
     val_dataset = MaskedLongitudinalDataset(
         args.data_dir, max_history=args.max_history,
         image_size=args.image_size, use_augmentation=False,
-        eye_ids=val_eye_ids,
+        eye_ids=val_eye_ids, manifest=args.manifest, cohort=args.cohort,
     )
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -273,8 +284,10 @@ def main():
 
                     pred_np = pred.squeeze(1).cpu().numpy()
                     tgt_np = target.squeeze(1).cpu().numpy()
+                    masks_np = batch["target_pixel_mask"].squeeze(1).numpy() > .5
                     for bi in range(pred_np.shape[0]):
-                        s = compute_ssim(tgt_np[bi], pred_np[bi])
+                        s = masked_ssim((tgt_np[bi] + 1) / 2, (pred_np[bi] + 1) / 2,
+                                        masks_np[bi], 1.)
                         if not np.isnan(s):
                             val_ssims.append(s)
 

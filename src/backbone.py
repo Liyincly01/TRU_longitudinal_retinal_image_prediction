@@ -22,6 +22,7 @@ from PIL import Image
 from torch.utils.data import Dataset
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
+from .data import parse_filename, sequences
 
 
 # =============================================================================
@@ -189,6 +190,8 @@ class MultiScaleTemporalUNet_v13(nn.Module):
     def __init__(self, max_history=6, base_channels=64, delta_emb_dim=256,
                  history_dropout=0.03):
         super().__init__()
+        if max_history < 1:
+            raise ValueError("max_history must be positive.")
         self.max_history = max_history
         self.base_channels = base_channels
         self.time_dim = base_channels * 4
@@ -284,6 +287,9 @@ class MultiScaleTemporalUNet_v13(nn.Module):
         return torch.stack(last_frames)
 
     def forward(self, x_noisy, history, deltas, temporal_mask, t):
+        history = history[:, -self.max_history:]
+        deltas = deltas[:, -self.max_history:]
+        temporal_mask = temporal_mask[:, -self.max_history:]
         t_emb = self.time_mlp(t)
         delta_emb = self.delta_embed(deltas)
         delta_recent_emb = delta_emb[:, -1]
@@ -359,15 +365,20 @@ class MaskedLongitudinalDataset(Dataset):
 
     PADDING_DELTA = 100.0
 
-    def __init__(self, data_dir, max_history=6, image_size=256,
-                 use_augmentation=True, eye_ids=None):
+    def __init__(self, data_dir=None, max_history=6, image_size=256,
+                 use_augmentation=True, eye_ids=None, manifest=None, cohort=None):
         super().__init__()
+        if max_history < 1:
+            raise ValueError("max_history must be positive.")
         self.data_dir = data_dir
         self.max_history = max_history
         self.image_size = image_size
         self.use_augmentation = use_augmentation
 
-        all_files = glob.glob(os.path.join(data_dir, "*.png"))
+        self._mask_paths = {}
+        self.manifest = manifest
+        self.cohort = cohort
+        all_files = glob.glob(os.path.join(data_dir, "*.png")) if data_dir else []
         self.image_files = [f for f in all_files if not f.endswith("_mask.png")]
         print(f"Found {len(self.image_files)} images")
 
@@ -390,20 +401,15 @@ class MaskedLongitudinalDataset(Dataset):
               f"{len(self.eye_sequences)} eyes ({unique_mrns} patients)")
 
     def _parse_filename(self, filepath):
-        filename = os.path.basename(filepath)
-        base = filename.replace("_reg.png", "").replace("_anchor.png", "")
-        m = re.match(r"^(\d+)_(\d+)_([\d.]+)", base)
-        if m:
-            return m.group(1), f"{m.group(1)}_{m.group(2)}", float(m.group(3))
-        parts = base.split("_")
-        if len(parts) >= 3:
-            try:
-                return parts[0], f"{parts[0]}_{parts[1]}", float(parts[2])
-            except ValueError:
-                pass
-        return None, None, None
+        return parse_filename(filepath)
 
     def _parse_and_group_files(self):
+        if self.manifest:
+            grouped = sequences(manifest=self.manifest, cohort=self.cohort)
+            self._mask_paths = {v["image"]: v["mask"] for visits in grouped.values() for v in visits}
+            return ({e: [{"path": v["image"], "time": v["time"]} for v in visits]
+                     for e, visits in grouped.items()},
+                    {e: visits[0]["patient_id"] for e, visits in grouped.items()})
         eye_data = defaultdict(list)
         eye_to_mrn = {}
         for filepath in self.image_files:
@@ -413,6 +419,8 @@ class MaskedLongitudinalDataset(Dataset):
                 eye_to_mrn[eye_id] = mrn
         for eye_id in eye_data:
             eye_data[eye_id].sort(key=lambda x: x["time"])
+            if np.any(np.diff([v["time"] for v in eye_data[eye_id]]) <= 0):
+                raise ValueError(f"Visit times must be strictly increasing for {eye_id}.")
         eye_sequences = {eid: v for eid, v in eye_data.items() if len(v) >= 2}
         eye_to_mrn = {eid: mrn for eid, mrn in eye_to_mrn.items() if eid in eye_sequences}
         return eye_sequences, eye_to_mrn
@@ -429,6 +437,8 @@ class MaskedLongitudinalDataset(Dataset):
         return samples
 
     def _get_mask_path(self, image_path):
+        if image_path in self._mask_paths:
+            return self._mask_paths[image_path]
         fn = os.path.basename(image_path)
         d = os.path.dirname(image_path)
         for old, new in [("_reg.png", "_reg_mask.png"), ("_anchor.png", "_anchor_mask.png")]:
@@ -451,7 +461,7 @@ class MaskedLongitudinalDataset(Dataset):
             mask = Image.open(mask_path).convert("L")
             mask = mask.resize((self.image_size, self.image_size), Image.NEAREST)
         else:
-            mask = Image.new("L", (self.image_size, self.image_size), 255)
+            raise FileNotFoundError(f"Missing validity mask for {image_path}.")
         return img, mask
 
     def _apply_augmentation(self, images, masks):

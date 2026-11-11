@@ -1,6 +1,3 @@
-# Loose minima. Exact versions used during training/evaluation are not pinned.
-# PyTorch must be installed separately per your CUDA version — see pytorch.org.
-
 torch>=2.0
 torchvision>=0.15
 numpy>=1.23
@@ -11,6 +8,3 @@ scikit-image>=0.19
 matplotlib>=3.6
 tqdm>=4.64
 opencv-python>=4.7
-
-# Optional: used by evaluate.py for atrophy HD95 (falls back to NaN if absent).
-medpy>=0.4

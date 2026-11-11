@@ -54,3 +54,13 @@ results_per_eye_*.csv
 .idea/
 *.swp
 *.swo
+runs/
+outputs/
+private/
+checkpoints/
+weights/
+*.npy
+*.npz
+*.csv
+*.tsv
+*.pdf

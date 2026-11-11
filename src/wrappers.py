@@ -28,7 +28,7 @@ from .backbone import extract_last_frame
 # =============================================================================
 
 class TRUWrapper(nn.Module):
-    """Temporal Residual U-Net.
+    """Temporal Retinal U-Net.
 
     Training: clean I_N → model → x̂₀; loss = masked MSE(x̂₀, I*).
     Inference: same single forward pass.
