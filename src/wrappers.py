@@ -1,5 +1,5 @@
 """
-Five-configuration training/inference wrappers (paper Table 3).
+Five-configuration training/inference wrappers.
 
 All four classes wrap the shared `MultiScaleTemporalUNet_v13` backbone so
 that parameter count and compute are identical. The configurations differ
