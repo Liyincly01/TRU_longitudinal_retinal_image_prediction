@@ -3,8 +3,7 @@ Shared U-Net backbone and dataset for all five configurations.
 
 The backbone `MultiScaleTemporalUNet_v13` is used by every training wrapper
 (TRU, IA-Nonlinear, IA-Linear, Std-DDIM). This keeps the parameter count
-and compute identical across configurations so that Table 3 comparisons
-isolate the effect of the noise/alignment strategy rather than capacity.
+and compute identical across configurations.
 """
 
 import glob
