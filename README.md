@@ -51,14 +51,14 @@ The 2D-BrLP diffusion stage uses 150 epochs, batch size 12, learning rate 2e-4, 
 
 ```bash
 python evaluate.py --manifest private/visits.csv --cohort optos --split test \
-  --ckpt_tru weights/tru_ema_mh10.pt --segmentor_weights weights/atrophy.pt \
+  --ckpt_tru weights/tru_v1.0.pt --segmentor_weights weights/atrophy.pt \
   --fovea_lookup private/fovea.csv --save_probabilities --save_predictions \
   --output_dir outputs/optos
 ```
 
 Each eye's final visit is the target. Copy-last and pixelwise linear extrapolation are included automatically. Outputs include `per_eye.csv`, `summary.csv`, `comparisons.csv` and input/checkpoint metadata. Without a segmentor, evaluation reports image metrics only. Missing endpoint measurements remain undefined.
 
-Inference uses each TRU-family checkpoint's history limit by default (ten for `tru_ema_mh10.pt`). Supply `--max_history 6`, for example, to override it. Both the training and inference limits are recorded in `run.json`; per-eye outputs report the number used. The model API also accepts `MultiScaleTemporalUNet_v13(max_history=N)`.
+Inference uses each TRU-family checkpoint's history limit by default (ten for `tru_v1.0.pt`). Supply `--max_history 6`, for example, to override it. Both the training and inference limits are recorded in `run.json`; per-eye outputs report the number used. The model API also accepts `MultiScaleTemporalUNet_v13(max_history=N)`.
 
 Optional checkpoint flags are `--ckpt_std_ddim`, `--ckpt_ia_nonlinear`, `--ckpt_ia_linear`, `--ckpt_tadm`, `--ckpt_brlp` and `--ckpt_imageflownet`. TADM uses five DDIM steps. ImageFlowNet also requires `--ifn_repo` and `--ifn_time_multiplier`, fixed from training as `5 / maximum_training_interval_in_years`. Checkpoints must match the provided architectures. Predictions from other implementations can be supplied with `--predictions_csv`.
 
